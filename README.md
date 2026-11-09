@@ -1,35 +1,52 @@
-# Mi Apuntador v2.0 — PWA para Android
+# Mi Apuntador v2.1 — PWA instalable en Android
 
-Aplicación web instalable para ensayar obras de teatro. No requiere servidor ni cuenta para guardar las obras: utiliza IndexedDB del navegador. La configuración y las correcciones permanecen guardadas entre aperturas, salvo que se borren los datos del sitio/navegador.
+Actualización de la versión 2.0. Conserva la base de datos `mi-apuntador-db` y la tabla `works`: **no borres los datos del sitio** durante la actualización.
 
-## Actualizar GitHub Pages (sin borrar los guiones)
+## Actualizar tu GitHub Pages
 
-1. **Antes de actualizar**, abre la aplicación v0.1 en Android y usa **Obras → Exportar copia de seguridad** para guardar tus datos.
-2. Descomprime el ZIP y sube a la **raíz de la misma rama GitHub Pages** los seis archivos (`index.html`, `app.js`, `sw.js`, `manifest.webmanifest`, `icon.svg`, `README.md`) sustituyendo los existentes. **No** subas el ZIP sin descomprimir.
-3. Espera a que GitHub Pages termine de publicar y vuelve a abrir la misma URL. Si ves la versión antigua, cierra la aplicación y vuelve a abrirla; en Chrome prueba una recarga completa. El service worker cambia de caché a v2.0.
-4. Los guiones y sus correcciones se mantienen si abres **exactamente el mismo dominio y ruta** y no borras los datos del sitio. Si no aparecen, restaura la copia JSON mediante **Obras → Restaurar copia**.
-5. Para el ensayo de *Nou dones i un misteri*, importa el JSON estructurado que se preparó por separado, elige **LOUISE**, idioma **Català**, y selecciona la escena deseada. **No subas un guion privado a un repositorio público.**
+1. En el móvil, antes de actualizar: **Obras → Exportar copia de seguridad**. Guarda ese JSON fuera de la aplicación.
+2. En Terminal, dentro del repositorio local, comprueba que trabajas en `main` y sincroniza **antes de copiar los archivos nuevos**:
 
-## Novedades
+   ```bash
+   git branch --show-current
+   git pull --ff-only origin main
+   ```
 
-- Importa el formato JSON de obra con `scenes[].lines[]`, `type` (`dialogue`, `song`, `direction`), `stageDirections[]`, `sourcePage`, y otros metadatos sin descartarlos. Las acotaciones se colocan después de la intervención especificada por `afterLine` y son visibles pero no narradas.
-- Editor de texto y de tipo de intervención; editor de acotaciones y su posición.
-- Idioma por obra (`ca-ES`, `es-ES`, `en-US`, `fr-FR`, `de-DE`, `it-IT`) para sintetizador y reconocimiento de voz. Selector de voces instaladas que coincidan con el idioma. Si no hay voz adecuada, el teléfono puede utilizar una voz incorrecta o fallar: comprueba **Ajustes Android → Texto a voz**.
-- Identificación de personajes individuales y colectivos: `TOTES` incluye el elenco completo; `LOUISE, GABY, AUGUSTINE, MAMY` pertenece también a Louise. La aplicación no pronuncia las intervenciones de tu personaje, aunque aparezca acompañado de otros.
-- En modo «Solo mis entradas», también se cuentan las réplicas colectivas.
-- Persistencia de la configuración en IndexedDB y exportación/restauración de copias JSON.
+3. Descomprime `Mi_Apuntador_Android_v2.1.zip`. Sustituye los archivos del repositorio por los que hay **dentro de la carpeta `mi-apuntador/`** del ZIP. Mantén intacta la carpeta oculta `.git`. Después ejecuta:
 
-## Límites de esta versión
+   ```bash
+   git add index.html app.js sw.js manifest.webmanifest icon.svg README.md
+   git commit -m "Mi Apuntador v2.1: ensayo inteligente"
+   git push origin main
+   ```
 
-- Los PDF con formatos complejos pueden seguir extrayéndose mal: se recomienda importar un JSON revisado. No se aplica OCR a PDFs escaneados.
-- Las canciones se guardan y distinguen visualmente, pero el lector de voz **no canta** (lee el texto).
-- Una intervención coral completa se reserva como turno del usuario si participa en ella. No se separan todavía las partes cantadas o habladas por cada intérprete.
-- El reconocimiento de voz depende de Chrome/Android y puede requerir conexión. La coincidencia es aproximada.
-- El guion y las correcciones no se sincronizan entre dispositivos: utiliza las copias JSON. No borres los datos de la app sin hacer una copia.
+   Si `git pull` avisa de que sobrescribiría cambios locales, no lo fuerces: resuelve primero esa situación. Comprueba que el resultado de `git branch --show-current` es `main` antes de subir.
+4. Abre el mismo enlace de GitHub Pages desde Chrome Android. El service worker utiliza una caché nueva (`mi-apuntador-v2.1`). Si sigues viendo la v2.0, cierra la aplicación y recarga la dirección en Chrome; puede que debas cerrar y abrir la PWA de nuevo.
+5. Comprueba que tu obra sigue en «Obras» y que «Inicio» permite preparar o continuar un ensayo. Si falta una obra, importa la copia JSON.
 
-## Estructura de los archivos
+**Importante:** no subas el JSON ni el PDF de la obra a un repositorio público de GitHub. Impórtalos en el móvil desde la app.
 
-- `index.html`: interfaz.
-- `app.js`: importación, edición, almacenamiento y ensayo.
-- `sw.js`: caché offline de archivos de la aplicación.
-- `manifest.webmanifest` e `icon.svg`: instalación/icono PWA.
+## Cambios
+
+- Inicio prioritario, «Preparar», «Obras» y «Ajustes»; la pestaña «Ensayar» solo se muestra con una sesión preparada.
+- «Preparar» permite elegir una escena y **un punto de inicio** filtrando por personaje o palabras del texto.
+- En ensayo se puede **saltar directamente** a una intervención, repetir solo el turno actual, repetir la última réplica ajena y pulsar **«He terminado»** en cualquier intervención propia.
+- Se admite reconocimiento automático de las intervenciones; se intenta mantener la escucha mediante reactivación limitada en pausas. El botón «He terminado» siempre está disponible. Ante errores como `network`, no se fuerza un bucle de reintentos.
+- Idioma principal por obra y campo `languageSegments` por intervención. Se lee por fragmentos y se intenta reconocer secuencialmente con el idioma indicado para cada parte. Chrome no puede reconocer varios idiomas a la vez de forma garantizada.
+- Edición de `languageSegments` por intervención. Cada elemento debe tener `text` y `language`. **La concatenación exacta de los fragmentos debe coincidir con el texto de la intervención**, para evitar perder palabras. Idiomas: `ca-ES`, `es-ES`, `de-DE`, `fr-FR`, `en-US`, `it-IT`.
+- Velocidad de síntesis ajustable de 0,60× a 2,00×; predeterminado 1,15×. Se puede modificar durante el ensayo y se guarda por obra.
+- Recuperación de la posición de un ensayo interrumpido, junto con su personaje, selección de escenas y modo.
+- Se conservan los parlamentos colectivos (`TOTES`) y las intervenciones compartidas que incluyen a Louise como turnos propios que no se leen en voz alta.
+- JSON de obra y sus metadatos, acotaciones y canciones: compatible con el archivo del primer acto preparado previamente.
+
+## Limitaciones
+
+- La síntesis de voz **lee**, no canta. El orden y la asignación de versos de canciones con varias columnas deben revisarse manualmente.
+- La detección de final de frase es **aproximada** y puede adelantar o retrasar el paso; usa «He terminado» para control manual. Durante el cambio de idioma pueden producirse pausas y reconocimientos inexactos.
+- Chrome Android es el navegador aconsejado. Otros navegadores pueden dar errores de reconocimiento (`network`). Las funciones de voz pueden necesitar conexión y voces instaladas. No es un reconocimiento offline garantizado.
+- No hay sincronización de guiones entre dispositivos. IndexedDB conserva las obras solo mientras mantengas los datos de ese sitio y navegador; conserva copias JSON periódicas.
+- Los PDF con tablas/columnas pueden extraerse mal. Para esta obra, importa el JSON del acto I en lugar de analizar el PDF directamente.
+
+## Archivos del proyecto
+
+`index.html`, `app.js`, `sw.js`, `manifest.webmanifest`, `icon.svg` y `README.md`. Para GitHub Pages, colócalos en la raíz publicada del repositorio.
