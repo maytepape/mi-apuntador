@@ -41,3 +41,13 @@ PWA para ensayar obras de teatro en Android. Esta versión modifica la navegaci�
 ## Limitaciones
 
 El reconocimiento de voz se basa en la API del navegador, que puede necesitar red, y se ha probado principalmente para Chrome Android en sesiones anteriores. La síntesis de voz no canta. Los fragmentos de diferentes idiomas necesitan revisión manual. Las obras se conservan **por origen y navegador** en IndexedDB; la misma aplicación en otra ruta web o navegador puede tener una base de datos distinta. Realiza copias de seguridad regulares.
+
+
+## Versión 2.3
+
+- Botón **⏸ Pausar / ▶ Reanudar** durante el ensayo: detiene la lectura, el reconocimiento y los avances automáticos. Al reanudar comienza de nuevo la intervención actual (no desde mitad de frase).
+- Colores estables por personaje en el diálogo y en la configuración de voces.
+- Contador de intervenciones propias realizadas y pendientes, incluidas las compartidas. Solo aumenta cuando se completa el turno; saltar a otra intervención no lo incrementa. El contador cubre las escenas seleccionadas para el ensayo.
+- **Preparar ensayo → Voces por personaje:** permite elegir distintas voces disponibles en Android para el idioma principal; si no hay suficientes se reutiliza la general. Las voces se guardan por obra.
+- Misma IndexedDB y esquema previo: no borra las obras ni las preferencias.
+- Importante: Chrome Android puede ofrecer una única voz catalana; la asignación de voces depende de las voces reales del dispositivo.
