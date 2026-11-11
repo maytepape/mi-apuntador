@@ -1,3 +1,49 @@
+# Mi Apuntador v2.6 — modos de ensayo diferenciados
+
+**Basada en v2.5**, conserva su controlador de reconocimiento de voz, trazas de diagnóstico, síntesis por personajes, colores, pausa, idiomas por fragmentos, barra de progreso, almacenamiento IndexedDB (`mi-apuntador-db`), obras importadas y preferencias. No borres los datos del navegador al actualizar.
+
+## Modos
+
+| Modo | Mis frases | Transcripción | Ayudas | Reproducción |
+|---|---|---|---|---|
+| Normal | Visibles | Visible | No hacen falta | Flujo de réplicas habitual |
+| Memorización | Ocultas | Visible | Pistas graduales y Ver texto | Flujo habitual |
+| Función completa | Ocultas | Oculta (internamente sigue reconociendo) | Solo si solicitas Pista o Ver texto | Flujo continuo, sin porcentaje visible |
+| Solo mis entradas | Ocultas | Visible | Pistas graduales y Ver texto | Solo tu turno y su última réplica previa en la misma escena |
+
+En todos los modos se conservan **He terminado**, pausa/reanudación, lectura automática, escucha de voz si está habilitada, réplica anterior, cambio de velocidad y salto entre intervenciones. En **Función completa**, la aplicación no muestra transcripción ni porcentaje de coincidencia, pero puede avanzar cuando reconoce el texto completo. Se mantiene el botón «He terminado» como alternativa cuando Chrome no pueda reconocerlo.
+
+**Contador corregido:** pulsar «Siguiente» para saltarse un turno propio ya no lo marca como realizado. Solo cuentan las intervenciones terminadas mediante «He terminado» o coincidencia de reconocimiento. La evaluación de voz continúa siendo aproximada.
+
+## Actualizar GitHub Pages (rama `pruebas`)
+
+1. Exporta una copia de seguridad desde Ajustes → Gestionar obras.
+2. Extrae el ZIP y copia los seis archivos de `mi-apuntador/` a la raíz del repositorio.
+3. En la carpeta del repositorio, usa:
+
+```bash
+git switch pruebas
+git pull --ff-only origin pruebas
+# Sustituye los archivos por los del ZIP
+git add index.html app.js sw.js manifest.webmanifest icon.svg README.md
+git commit -m "Mi Apuntador v2.6: modos de ensayo"
+git push origin pruebas
+```
+
+GitHub Pages publica solo la rama seleccionada en Settings → Pages. `main` no se altera.
+
+## Pruebas recomendadas
+
+1. Misma intervención de Louise en Normal (texto visible) y Memorización (oculto, pista y revelar).
+2. Función completa: sin transcript visible ni porcentaje, pero controles disponibles a demanda.
+3. Solo mis entradas: no reproduce parlamentos largos ajenos a las entradas de Louise; mantiene la última réplica de otro personaje que la precede en su escena.
+4. Pulsar «Siguiente» sin hablar: el contador NO debe sumar esa intervención.
+5. Verificar Ajustes → Diagnóstico del micrófono (v2.5) y obras/progreso existentes.
+
+**Limitaciones:** reconocimiento y voces siguen sujetos a Chrome Android. No se ha realizado un ensayo físico con micrófono real en esta compilación. No subas guiones al repositorio público.
+
+---
+
 # Mi Apuntador v2.5 — reconocimiento y diagnóstico
 
 Se conserva IndexedDB y la estructura PWA de v2.4. Esta versión modifica únicamente el reconocimiento de voz y añade un registro de diagnóstico en Ajustes.
