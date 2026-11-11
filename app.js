@@ -1,6 +1,6 @@
 'use strict';
 const $=id=>document.getElementById(id);const $$=q=>[...document.querySelectorAll(q)];
-const DB_NAME='mi-apuntador-db',STORE='works';const THEME_KEY='mi-apuntador-theme';let db,works=[],activeId=null,tab='home',editSceneId=null,session=null,recognizer=null,speaking=null,autosaveTimers=new Map(),recognitionEpoch=0,recTimer=null,recRestartTimer=null,directionTimer=null;
+const DB_NAME='mi-apuntador-db',STORE='works';const THEME_KEY='mi-apuntador-theme';let db,works=[],activeId=null,tab='home',editSceneId=null,session=null,recognizer=null,speaking=null,autosaveTimers=new Map(),recognitionEpoch=0,recTimer=null,recRestartTimer=null,directionTimer=null,voiceTrace=[],voiceSessionNumber=0;
 
 // v2: structured script identity, language and shared-participant support.
 const LANGUAGES={'ca-ES':'Català','es-ES':'Español','en-US':'English','fr-FR':'Français','de-DE':'Deutsch','it-IT':'Italiano'};
@@ -108,7 +108,30 @@ $('start-filter').oninput=renderStartChoices;$('mode').onchange=renderStartChoic
 $('prepare-work').onchange=e=>{choose(works.find(w=>w.id===e.target.value));renderPrepare()};$('actor').onchange=e=>{let w=getWork();if(w){w.actor=e.target.value;saveSoon(w);renderStartChoices();renderCharacterVoices()}};$('scope').onchange=e=>{let w=getWork();if(w){w.practiceOptions={...(w.practiceOptions||{}),scope:e.target.value};saveSoon(w)}renderPrepare()};$('language').onchange=e=>{let w=getWork();if(!w)return;w.language=e.target.value;w.voice='';saveSoon(w);renderVoices();renderCharacterVoices()};$('voice').onchange=e=>{let w=getWork();if(w){w.voice=e.target.value;saveSoon(w)}};if('speechSynthesis' in window)speechSynthesis.addEventListener?.('voiceschanged',()=>{if(tab==='prepare'){renderVoices();renderCharacterVoices()}});
 const normalize=s=>(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-zñ0-9\s]/g,' ').replace(/\s+/g,' ').trim();
 function score(expected,said){let a=normalize(expected).split(' ').filter(Boolean),b=new Set(normalize(said).split(' ').filter(Boolean));if(!a.length)return 0;return Math.round(100*a.filter(x=>b.has(x)).length/a.length)}
-function stopAll(){clearTimeout(directionTimer);directionTimer=null;recognitionEpoch++;clearTimeout(recTimer);clearTimeout(recRestartTimer);recTimer=null;recRestartTimer=null;if('speechSynthesis'in window)speechSynthesis.cancel();speaking=null;const old=recognizer;recognizer=null;try{old?.abort()}catch{}}
+// Local, bounded diagnostic trace: no audio or full transcriptions are stored.
+function traceVoice(kind,info={}){
+ const entry={time:new Date().toISOString().slice(11,23),kind,...info};
+ voiceTrace.push(entry);if(voiceTrace.length>350)voiceTrace.shift();
+ const target=$('voice-log');if(target)target.value=voiceTrace.map(x=>JSON.stringify(x)).join('\n');
+}
+function mergeRecognized(base,incoming){
+ base=String(base||'').trim();incoming=String(incoming||'').trim();
+ if(!base)return incoming;if(!incoming)return base;
+ const a=base.split(/\s+/),b=incoming.split(/\s+/);
+ const norm=x=>x.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
+ // A fresh SpeechRecognition session may start with the final result of the previous one.
+ // Compare overlapping word *sequences*, never just isolated repeated words.
+ let overlap=0;
+ for(let n=Math.min(a.length,b.length);n>=2;n--){
+  if(a.slice(-n).every((v,i)=>norm(v)===norm(b[i]))){overlap=n;break}
+ }
+ // If Chrome returned the whole previously confirmed text as a snapshot.
+ if(overlap===b.length)return base;
+ return [base,...b.slice(overlap)].join(' ').trim();
+}
+$('voice-copy').onclick=()=>{const data=$('voice-log').value||'Sin eventos';if(navigator.clipboard?.writeText){navigator.clipboard.writeText(data).then(()=>toast('Registro copiado')).catch(()=>toast('No se pudo copiar: usa seleccionar texto'))}else{ $('voice-log').focus();$('voice-log').select();toast('Selecciona y copia el registro')} };
+$('voice-clear').onclick=()=>{voiceTrace=[];$('voice-log').value='';toast('Registro borrado')};
+function stopAll(){traceVoice('STOP_ALL',{epoch:recognitionEpoch,hadRecognizer:!!recognizer});clearTimeout(directionTimer);directionTimer=null;recognitionEpoch++;clearTimeout(recTimer);clearTimeout(recRestartTimer);recTimer=null;recRestartTimer=null;if('speechSynthesis'in window)speechSynthesis.cancel();speaking=null;const old=recognizer;recognizer=null;try{old?.abort()}catch{}}
 function langParts(line,w){let parts=Array.isArray(line.languageSegments)?line.languageSegments.filter(p=>p&&typeof p.text==='string'&&p.text.trim()):[];if(parts.length&&parts.map(p=>p.text).join('')===line.text)return parts.map(p=>({text:p.text,language:LANGUAGES[p.language]?p.language:getLang(w)}));return [{text:cleanForSpeech(line),language:LANGUAGES[line.language]?line.language:getLang(w)}]}
 function speechLine(line,done){if(!('speechSynthesis'in window)){toast('Este navegador no admite síntesis');return}let w=getWork(),parts=langParts(line,w),epoch=recognitionEpoch;window.speechSynthesis.cancel();let i=0;function part(){if(epoch!==recognitionEpoch||session?.paused)return;if(i>=parts.length){speaking=null;done?.();return}let x=parts[i++],u=new SpeechSynthesisUtterance(x.text);u.lang=x.language;u.rate=w?.rate||1.15;let v=voiceFor(x.language,voiceChoiceForLine(w,line));if(v)u.voice=v;u.onend=()=>{if(epoch===recognitionEpoch)part()};u.onerror=()=>{speaking=null;$('feedback').textContent='No se pudo leer la frase con la voz seleccionada. Puedes avanzar manualmente.'};speaking=u;speechSynthesis.speak(u)}part()}
 function storePractice(){if(!session)return;let w=works.find(w=>w.id===session.workId);if(!w)return;w.practiceState={config:session.config,index:session.index,completedIds:[...(session.completedIds||[])],sceneName:currentLine()?.scene||'',timestamp:Date.now()};saveSoon(w)}
@@ -129,103 +152,123 @@ $('repeat-cue').onclick=()=>{if(!session||session.paused)return;let w=getWork();
 $('listen').onclick=()=>{if(!session||session.paused)return;let l=currentLine();if(isDirection(l)||isMine(l,getWork(),session.actor)){toast('Esta frase es tuya o es una acotación');return}stopAll();speechLine(l)};
 $('hint').onclick=()=>{if(!session)return;if(!isMine(currentLine(),getWork(),session.actor)){toast('Las pistas son para tus intervenciones');return}session.hint=Math.min(2,session.hint+1);renderRehearsal(false)};
 $('reveal').onclick=()=>{if(!session)return;session.revealed=!session.revealed;renderRehearsal(false)};
-// SpeechRecognition returns a *snapshot* of all results in a recognition session.
-// Interim and final hypotheses must never be blindly appended on every onresult.
+// A new recognizer owns exactly one temporary snapshot. Only finalized words are
+// committed on end, once. Old callbacks and multiple starts are explicitly ignored.
 function listenSpeech(){
  if(!session||session.paused||!isMine(currentLine(),getWork(),session.actor))return;
  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
  if(!SR){toast('Reconocimiento no disponible. Usa Chrome Android o «He terminado».');return}
  stopAll();
  const epoch=recognitionEpoch,index=session.index,w=getWork(),line=currentLine(),parts=langParts(line,w);
- let segment=0,completedSegments=[],segmentCommitted='',silentRestarts=0,restartRequested=false;
- let previousSessionEnd=0,active=false;
- const valid=()=>epoch===recognitionEpoch&&session&&!session.paused&&session.index===index&&tab==='rehearsal';
- const combine=(...items)=>items.map(v=>(v||'').trim()).filter(Boolean).join(' ').trim();
- const display=live=>{
-   if(!valid())return;
-   session.heard=combine(...completedSegments,segmentCommitted,live);
-   $('transcript-area').classList.toggle('hidden',!session.heard);
-   $('transcript').textContent=session.heard;
+ let segment=0,completedSegments=[],committed='',silentRestarts=0,consecutiveStarts=0,activeRecognizer=null,turnFinished=false;
+ const valid=()=>!turnFinished&&epoch===recognitionEpoch&&session&&!session.paused&&session.index===index&&tab==='rehearsal';
+ const combine=(...items)=>items.map(v=>String(v||'').trim()).filter(Boolean).join(' ').trim();
+ const showLive=live=>{
+  if(!valid())return;
+  session.heard=combine(...completedSegments,mergeRecognized(committed,live));
+  $('transcript-area').classList.toggle('hidden',!session.heard);
+  $('transcript').textContent=session.heard;
  };
- function scheduleRestart(delay){
-   if(!valid()||!w.autoRetry||silentRestarts>=2){
-     if(valid())$('feedback').textContent='Escucha detenida. Pulsa «Hablar» para continuar o «He terminado».';
-     return;
-   }
-   clearTimeout(recRestartTimer);
-   recRestartTimer=setTimeout(()=>{recRestartTimer=null;if(valid())startRecognizer()},delay);
+ function scheduleRestart(reason){
+  if(!valid())return;
+  if(!w.autoRetry||silentRestarts>=2||consecutiveStarts>=12){
+   traceVoice('RETRY_BLOCKED',{reason,silentRestarts,consecutiveStarts});
+   $('feedback').textContent='Escucha detenida. Pulsa «Hablar» para continuar o «He terminado».';
+   return;
+  }
+  // Exact user-selected pause, not a hardcoded subsecond interval.
+  const delay=Math.max(2,Number(w.pauseSeconds)||5)*1000;
+  clearTimeout(recRestartTimer);
+  traceVoice('RETRY_SCHEDULED',{reason,delayMs:delay});
+  recRestartTimer=setTimeout(()=>{recRestartTimer=null;if(valid()&&!activeRecognizer)startRecognizer()},delay);
  }
  function startRecognizer(){
-   if(!valid()||active)return;
-   const r=new SR();recognizer=r;active=true;
-   r.lang=parts[segment]?.language||getLang(w);
-   r.interimResults=true;r.continuous=true;r.maxAlternatives=1;
-   let snapshotFinal='',snapshotInterim='',fatal=false,hadSpeech=false,changingSegment=false;
-   const stopForInactivity=()=>{
-     clearTimeout(recTimer);
-     // Chrome ends naturally on silence. This is only a fallback for a stuck session;
-     // do not stop and restart the microphone every 5 seconds while the actor thinks.
-     recTimer=setTimeout(()=>{if(valid()&&recognizer===r){try{r.stop()}catch{}}},30000);
-   };
-   r.onresult=e=>{
-     if(!valid()||recognizer!==r)return;
-     // Full results[] is a cumulative snapshot for this *one* recognition instance.
-     const all=Array.from(e.results);
-     snapshotFinal=combine(...all.filter(x=>x.isFinal).map(x=>x[0]?.transcript||''));
-     snapshotInterim=combine(...all.filter(x=>!x.isFinal).map(x=>x[0]?.transcript||''));
-     let thisSession=combine(snapshotFinal,snapshotInterim);
-     if(!thisSession)return;
-     hadSpeech=true;silentRestarts=0;
-     display(thisSession);
-     const expected=parts[segment]?.text||'';
-     const pct=score(expected,combine(segmentCommitted,thisSession));
-     $('feedback').textContent='Escuchando ('+r.lang+') · coincidencia aproximada '+pct+'%. Puedes pulsar «He terminado».';
-     stopForInactivity();
-     if(pct>=87&&expected.trim().length>3){
-       if(segment<parts.length-1){
-         // Change the recognition language only *after* the previous instance ends.
-         segmentCommitted=combine(segmentCommitted,thisSession);
-         completedSegments.push(segmentCommitted);
-         segmentCommitted='';segment++;changingSegment=true;
-         display('');
-         clearTimeout(recTimer);
-         try{r.stop()}catch{}
-       }else{
-         clearTimeout(recTimer);move(1);
-       }
-     }
-   };
-   r.onerror=e=>{
-     if(!valid()||recognizer!==r||e.error==='aborted')return;
-     if(['not-allowed','service-not-allowed','network','audio-capture'].includes(e.error)){
-       fatal=true;
-       $('feedback').textContent='Reconocimiento no disponible ('+e.error+'). Usa «He terminado». No se reintentará automáticamente.';
-     }else if(e.error!=='no-speech'){
-       $('feedback').textContent='Reconocimiento interrumpido ('+e.error+').';
-     }
-   };
-   r.onend=()=>{
-     if(!valid()||recognizer!==r)return;
-     clearTimeout(recTimer);recognizer=null;active=false;
-     // Save only the final snapshot ONCE. A new instance has its own result indexes.
-     if(!changingSegment){
-       segmentCommitted=combine(segmentCommitted,snapshotFinal);
-       // Interim results are not finalized; preserve them visually only until
-       // the next recognizer starts, rather than pretending they are confirmed.
-       display('');
-     }
-     if(fatal)return;
-     if(changingSegment){silentRestarts=0;scheduleRestart(450);return}
-     if(!hadSpeech)silentRestarts++;
-     // Back off on silence: avoids continuous microphone blinking and loops.
-     const delay=!hadSpeech?Math.min(3500,1200*silentRestarts):900;
-     $('feedback').textContent=hadSpeech?'Esperando que continúes…':'Sin voz detectada. Esperando…';
-     previousSessionEnd=Date.now();
-     scheduleRestart(delay);
-   };
-   try{r.start();stopForInactivity();$('feedback').textContent='Escuchando en '+(LANGUAGES[r.lang]||r.lang)+'…'}
-   catch(err){active=false;recognizer=null;clearTimeout(recTimer);$('feedback').textContent='No se pudo activar el micrófono: '+err.message}
+  if(!valid()||activeRecognizer||recognizer){traceVoice('START_BLOCKED',{active:!!activeRecognizer,global:!!recognizer});return}
+  const r=new SR(),sid=++voiceSessionNumber;
+  activeRecognizer=r;recognizer=r;consecutiveStarts++;
+  const lang=parts[segment]?.language||getLang(w);
+  r.lang=lang;r.interimResults=true;r.continuous=true;r.maxAlternatives=1;
+  let lastFinal='',lastInterim='',hadResult=false,closed=false,fatal=false,nextSegment=false,finalized=false,started=false;
+  const owned=()=>valid()&&activeRecognizer===r&&recognizer===r&&!closed;
+  const summary=()=>({sid,epoch,segment,finalWords:lastFinal.trim()?lastFinal.trim().split(/\s+/).length:0,interimWords:lastInterim.trim()?lastInterim.trim().split(/\s+/).length:0});
+  const finishRecording=()=>{if(!owned())return;try{r.stop()}catch(error){traceVoice('STOP_ERROR',{sid,message:String(error.message||error)})}};
+  // Watchdog for a genuinely stalled recognition session, independent of the retry pause.
+  clearTimeout(recTimer);
+  recTimer=setTimeout(()=>{if(owned()){traceVoice('WATCHDOG_STOP',summary());finishRecording()}},45000);
+  r.onstart=()=>{if(owned()){started=true;traceVoice('START', {sid,epoch,lang,segment})}};
+  r.onaudiostart=()=>{if(owned())traceVoice('AUDIO_START',{sid})};
+  r.onaudioend=()=>{if(owned())traceVoice('AUDIO_END',{sid})};
+  r.onresult=e=>{
+   if(!owned())return;
+   // Rebuild the *current* recognition snapshot; resultIndex is not an append offset.
+   const rows=Array.from(e.results||[]);
+   lastFinal=combine(...rows.filter(x=>x.isFinal).map(x=>x[0]?.transcript||''));
+   lastInterim=combine(...rows.filter(x=>!x.isFinal).map(x=>x[0]?.transcript||''));
+   const live=combine(lastFinal,lastInterim);
+   if(!live)return;
+   hadResult=true;silentRestarts=0;
+   showLive(live);
+   traceVoice('RESULT',{...summary(),resultCount:rows.length,resultIndex:e.resultIndex,heardWords:session.heard.trim().split(/\s+/).filter(Boolean).length});
+   const expected=parts[segment]?.text||'';
+   const pct=score(expected,mergeRecognized(committed,live));
+   $('feedback').textContent='Escuchando ('+lang+') · coincidencia aproximada '+pct+'%. Puedes pulsar «He terminado».';
+   // Reset the watchdog on actual recognition progress.
+   clearTimeout(recTimer);recTimer=setTimeout(()=>{if(owned()){traceVoice('WATCHDOG_STOP',summary());finishRecording()}},45000);
+   if(pct>=87&&expected.trim().length>3){
+    if(segment<parts.length-1){
+     // Do not commit here and again in onend: exactly one path owns the snapshot.
+     nextSegment=true;
+     traceVoice('SEGMENT_MATCH',{sid,segment,pct});
+     finishRecording();
+    }else{
+     turnFinished=true;
+     traceVoice('TURN_COMPLETE',{sid,pct});
+     move(1);
+    }
+   }
+  };
+  r.onerror=e=>{
+   if(!owned())return;
+   traceVoice('ERROR',{sid,code:e.error||'unknown'});
+   if(['not-allowed','service-not-allowed','network','audio-capture'].includes(e.error)){
+    fatal=true;$('feedback').textContent='Reconocimiento no disponible ('+e.error+'). Usa «He terminado».';
+   }
+  };
+  r.onend=()=>{
+   if(closed)return;
+   closed=true;
+   if(!valid()||activeRecognizer!==r||recognizer!==r){traceVoice('STALE_END',{sid});return}
+   traceVoice('END',{...summary(),hadResult,started,nextSegment,fatal});
+   clearTimeout(recTimer);recTimer=null;
+   activeRecognizer=null;recognizer=null;
+   // onresult may fire multiple times with the same finalized snapshot.
+   // Commit that snapshot ONCE, at the close of this recognizer instance.
+   if(!finalized){
+    finalized=true;
+    committed=mergeRecognized(committed,lastFinal);
+    showLive('');
+   }
+   if(fatal)return;
+   if(nextSegment){
+    completedSegments.push(committed);committed='';segment++;
+    silentRestarts=0;
+    scheduleRestart('language-segment');
+    return;
+   }
+   if(!hadResult)silentRestarts++;
+   $('feedback').textContent=hadResult?'Esperando que continúes…':'Sin voz detectada. Esperando…';
+   scheduleRestart(hadResult?'recognition-ended':'no-speech');
+  };
+  try{
+   traceVoice('START_REQUEST',{sid,epoch,lang,segment});
+   r.start();$('feedback').textContent='Activando micrófono en '+(LANGUAGES[lang]||lang)+'…';
+  }catch(error){
+   clearTimeout(recTimer);recTimer=null;closed=true;activeRecognizer=null;recognizer=null;
+   traceVoice('START_EXCEPTION',{sid,message:String(error.message||error)});
+   $('feedback').textContent='No se pudo activar el micrófono: '+error.message;
+  }
  }
+ traceVoice('TURN_START',{epoch,index,language:parts[0]?.language||getLang(w),segments:parts.length,retrySeconds:w.pauseSeconds});
  startRecognizer();
 }
 $('talk').onclick=listenSpeech;

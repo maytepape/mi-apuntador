@@ -1,3 +1,25 @@
+# Mi Apuntador v2.5 — reconocimiento y diagnóstico
+
+Se conserva IndexedDB y la estructura PWA de v2.4. Esta versión modifica únicamente el reconocimiento de voz y añade un registro de diagnóstico en Ajustes.
+
+## Ver las trazas
+
+1. En Chrome Android, abre el ensayo de Louise y pulsa Hablar o permite que se active automáticamente.
+2. Si observas repeticiones o reinicios, pulsa Pausar.
+3. Entra en Ajustes → Diagnóstico del micrófono (v2.5) → Copiar registro.
+4. Pega el registro en la conversación. Las trazas no contienen el texto literal del guion ni el audio.
+
+## Cambios
+
+- Una única instancia activa y eventos antiguos ignorados.
+- Resultados parciales actualizan la vista; solo se consolida el resultado final una vez por instancia.
+- Solapamientos de varias palabras se eliminan al consolidar sesiones consecutivas.
+- Se respeta el ajuste de 2–15 segundos entre reintentos.
+- Máximo dos reinicios consecutivos sin voz y máximo doce aperturas por turno.
+- Registro de eventos limitado a 350 entradas, solo en memoria temporal.
+
+> Nota: los servicios de reconocimiento web pueden cerrar sesiones por su cuenta. La corrección debe validarse en Chrome Android. Haz copia de seguridad de tus obras antes de actualizar.
+
 # Mi Apuntador v2.4 — estabilidad de reconocimiento
 
 PWA para ensayar obras de teatro en Android. Esta versión modifica la navegación y añade temas de apariencia, sin cambiar el nombre ni la versión de la base de datos (`mi-apuntador-db`, almacén `works`). **No elimines los datos del sitio** para actualizar.
