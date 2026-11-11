@@ -1,4 +1,25 @@
-# Mi Apuntador v2.6 — modos de ensayo diferenciados
+# Mi Apuntador v2.7 — Corrección de reconocimiento y modo Normal
+
+Actualización sobre la v2.6. Conserva IndexedDB y preferencias existentes.
+
+## Correcciones
+- Reconstruye los resultados acumulativos de SpeechRecognition de Chrome Android: las hipótesis crecientes se sustituyen en vez de concatenarse.
+- Conserva fragmentos independientes de voz sin repetir cada hipótesis final.
+- Evita iniciar el mismo turno otra vez por pulsaciones duplicadas o renderizados; «Hablar» continúa un turno pendiente sin borrar el texto confirmado.
+- La función STOP_ALL anota ahora el motivo del cierre; TURN_START registra su origen, modo y visibilidad del texto para diagnosticar reinicios.
+- El modo Normal muestra siempre el parlamento propio. Los demás modos mantienen las reglas de la v2.6.
+- Persistencia y todas las funciones previas, sin migración destructiva.
+
+## Pruebas de Android
+1. Importa o reutiliza la obra y elige Normal. Comprueba que el parlamento propio aparece desde el inicio.
+2. Recita «No ha parat d'explicar la mateixa història...»: la transcripción no debe duplicarse a cada resultado.
+3. Comprueba que el indicador de escucha no parpadea por reinicios no solicitados.
+4. Si hay un fallo, copia Ajustes → Diagnóstico del micrófono (no almacena transcripciones).
+
+## Publicación
+Descomprime la carpeta mi-apuntador y reemplaza los archivos en la rama pruebas; nunca sobrescribas la carpeta .git.
+
+# Mi Apuntador v2.7 — modos de ensayo diferenciados
 
 **Basada en v2.5**, conserva su controlador de reconocimiento de voz, trazas de diagnóstico, síntesis por personajes, colores, pausa, idiomas por fragmentos, barra de progreso, almacenamiento IndexedDB (`mi-apuntador-db`), obras importadas y preferencias. No borres los datos del navegador al actualizar.
 
@@ -26,7 +47,7 @@ git switch pruebas
 git pull --ff-only origin pruebas
 # Sustituye los archivos por los del ZIP
 git add index.html app.js sw.js manifest.webmanifest icon.svg README.md
-git commit -m "Mi Apuntador v2.6: modos de ensayo"
+git commit -m "Mi Apuntador v2.7: modos de ensayo"
 git push origin pruebas
 ```
 

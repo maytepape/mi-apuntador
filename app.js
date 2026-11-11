@@ -1,6 +1,6 @@
 'use strict';
 const $=id=>document.getElementById(id);const $$=q=>[...document.querySelectorAll(q)];
-const DB_NAME='mi-apuntador-db',STORE='works';const THEME_KEY='mi-apuntador-theme';let db,works=[],activeId=null,tab='home',editSceneId=null,session=null,recognizer=null,speaking=null,autosaveTimers=new Map(),recognitionEpoch=0,recTimer=null,recRestartTimer=null,directionTimer=null,voiceTrace=[],voiceSessionNumber=0;
+const DB_NAME='mi-apuntador-db',STORE='works';const THEME_KEY='mi-apuntador-theme';let db,works=[],activeId=null,tab='home',editSceneId=null,session=null,recognizer=null,speaking=null,autosaveTimers=new Map(),recognitionEpoch=0,recTimer=null,recRestartTimer=null,directionTimer=null,voiceTrace=[],voiceSessionNumber=0,currentVoiceTurn=null;
 
 // v2: structured script identity, language and shared-participant support.
 const LANGUAGES={'ca-ES':'Català','es-ES':'Español','en-US':'English','fr-FR':'Français','de-DE':'Deutsch','it-IT':'Italiano'};
@@ -41,7 +41,7 @@ async function persist(w){w.updated=Date.now();$('save-status').textContent='Gua
 function saveSoon(w){if(!w)return;clearTimeout(autosaveTimers.get(w.id));$('save-status').textContent='Cambios pendientes';autosaveTimers.set(w.id,setTimeout(()=>persist(w).catch(e=>toast('Error guardando: '+e.message)),350))}
 const getWork=()=>works.find(w=>w.id===activeId);const getScene=(w,id)=>w?.scenes.find(s=>s.id===id);
 const escapeHTML=t=>String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function show(tabName){if(tabName==='prepare'&&!workReady(getWork())){toast('Antes de ensayar, revisa y valida una obra');tabName=getWork()?'edit':'library'}if(tabName==='rehearsal'&&!session){toast('Primero prepara un ensayo');return}if(tab==='rehearsal'&&tabName!=='rehearsal')stopAll();tab=tabName;$$('.page').forEach(p=>p.classList.toggle('hidden',p.id!==tab));$$('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));if(tab==='home')renderHome();if(tab==='library')renderWorks();if(tab==='edit')renderEdit();if(tab==='prepare')renderPrepare();if(tab==='settings')renderSettings();if(tab==='rehearsal'&&session)renderRehearsal(false);window.scrollTo(0,0)}
+function show(tabName){if(tabName==='prepare'&&!workReady(getWork())){toast('Antes de ensayar, revisa y valida una obra');tabName=getWork()?'edit':'library'}if(tabName==='rehearsal'&&!session){toast('Primero prepara un ensayo');return}if(tab==='rehearsal'&&tabName!=='rehearsal')stopAll('leave-rehearsal');tab=tabName;$$('.page').forEach(p=>p.classList.toggle('hidden',p.id!==tab));$$('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));if(tab==='home')renderHome();if(tab==='library')renderWorks();if(tab==='edit')renderEdit();if(tab==='prepare')renderPrepare();if(tab==='settings')renderSettings();if(tab==='rehearsal'&&session)renderRehearsal(false);window.scrollTo(0,0)}
 function syncSessionTab(){let b=$('rehearsal-tab');b.hidden=!session;let prep=document.querySelector('[data-tab=prepare]');if(prep)prep.hidden=!workReady(getWork())}
 function renderHome(){
   let w=getWork(),ready=workReady(w),onboard=!ready;syncSessionTab();
@@ -157,18 +157,54 @@ function mergeRecognized(base,incoming){
  if(overlap===b.length)return base;
  return [base,...b.slice(overlap)].join(' ').trim();
 }
+// Chrome may expose a succession of *cumulative hypotheses* as separate final
+// SpeechRecognitionResult entries. Joining every final row repeats the whole utterance.
+// Collapse actual expansions into one hypothesis; join genuinely independent chunks.
+function snapshotRecognition(results){
+ const rows=Array.from(results||[]).map(r=>({text:String(r?.[0]?.transcript||'').trim(),final:!!r?.isFinal})).filter(r=>r.text);
+ const words=t=>String(t||'').trim().split(/\s+/).filter(Boolean);
+ const canonical=t=>normalize(t);
+ const starts=(a,b)=>{const A=words(canonical(a)),B=words(canonical(b));return B.length>0&&A.length>=B.length&&B.every((v,i)=>v===A[i])};
+ const pieces=[];let expansions=0,duplicates=0;
+ for(const row of rows){
+  if(!pieces.length){pieces.push(row);continue}
+  const previous=pieces[pieces.length-1];
+  // Previous result is a prefix of a longer cumulative result (Chrome Android).
+  if(starts(row.text,previous.text) && words(row.text).length>words(previous.text).length){
+   pieces[pieces.length-1]=row;expansions++;continue;
+  }
+  if(starts(previous.text,row.text)){
+   // Replayed or shorter draft, do not duplicate the earlier phrase.
+   duplicates++;continue;
+  }
+  // Partially overlapping finalized chunks may be successive revisions too.
+  const prev=words(previous.text),next=words(row.text);
+  let overlap=0;
+  for(let n=Math.min(prev.length,next.length);n>=2;n--){
+   if(prev.slice(-n).map(canonical).every((v,i)=>v===canonical(next[i]))){overlap=n;break}
+  }
+  if(overlap){
+   pieces[pieces.length-1]={text:[...prev,...next.slice(overlap)].join(' '),final:previous.final&&row.final};
+   expansions++;continue;
+  }
+  pieces.push(row);
+ }
+ return {final:pieces.filter(x=>x.final).map(x=>x.text).join(' ').trim(),
+  interim:pieces.filter(x=>!x.final).map(x=>x.text).join(' ').trim(),
+  rows:rows.length,groups:pieces.length,expansions,duplicates};
+}
 $('voice-copy').onclick=()=>{const data=$('voice-log').value||'Sin eventos';if(navigator.clipboard?.writeText){navigator.clipboard.writeText(data).then(()=>toast('Registro copiado')).catch(()=>toast('No se pudo copiar: usa seleccionar texto'))}else{ $('voice-log').focus();$('voice-log').select();toast('Selecciona y copia el registro')} };
 $('voice-clear').onclick=()=>{voiceTrace=[];$('voice-log').value='';toast('Registro borrado')};
-function stopAll(){traceVoice('STOP_ALL',{epoch:recognitionEpoch,hadRecognizer:!!recognizer});clearTimeout(directionTimer);directionTimer=null;recognitionEpoch++;clearTimeout(recTimer);clearTimeout(recRestartTimer);recTimer=null;recRestartTimer=null;if('speechSynthesis'in window)speechSynthesis.cancel();speaking=null;const old=recognizer;recognizer=null;try{old?.abort()}catch{}}
+function stopAll(reason='unspecified'){traceVoice('STOP_ALL',{reason,epoch:recognitionEpoch,hadRecognizer:!!recognizer,hadRetry:!!recRestartTimer,turnIndex:session?.index});currentVoiceTurn=null;clearTimeout(directionTimer);directionTimer=null;recognitionEpoch++;clearTimeout(recTimer);clearTimeout(recRestartTimer);recTimer=null;recRestartTimer=null;if('speechSynthesis'in window)speechSynthesis.cancel();speaking=null;const old=recognizer;recognizer=null;try{old?.abort()}catch{}}
 function langParts(line,w){let parts=Array.isArray(line.languageSegments)?line.languageSegments.filter(p=>p&&typeof p.text==='string'&&p.text.trim()):[];if(parts.length&&parts.map(p=>p.text).join('')===line.text)return parts.map(p=>({text:p.text,language:LANGUAGES[p.language]?p.language:getLang(w)}));return [{text:cleanForSpeech(line),language:LANGUAGES[line.language]?line.language:getLang(w)}]}
 function speechLine(line,done){if(!('speechSynthesis'in window)){toast('Este navegador no admite síntesis');return}let w=getWork(),parts=langParts(line,w),epoch=recognitionEpoch;window.speechSynthesis.cancel();let i=0;function part(){if(epoch!==recognitionEpoch||session?.paused)return;if(i>=parts.length){speaking=null;done?.();return}let x=parts[i++],u=new SpeechSynthesisUtterance(x.text);u.lang=x.language;u.rate=w?.rate||1.15;let v=voiceFor(x.language,voiceChoiceForLine(w,line));if(v)u.voice=v;u.onend=()=>{if(epoch===recognitionEpoch)part()};u.onerror=()=>{speaking=null;$('feedback').textContent='No se pudo leer la frase con la voz seleccionada. Puedes avanzar manualmente.'};speaking=u;speechSynthesis.speak(u)}part()}
 function storePractice(){if(!session)return;let w=works.find(w=>w.id===session.workId);if(!w)return;w.practiceState={config:session.config,index:session.index,completedIds:[...(session.completedIds||[])],sceneName:currentLine()?.scene||'',timestamp:Date.now()};saveSoon(w)}
-function startPractice(config,index=0,completedIds=[]){let w=works.find(x=>x.id===config.workId);if(!w)return;choose(w);let all=config.sceneIds.flatMap(id=>{let s=getScene(w,id);return s?sceneEvents(s).map(l=>({...l,scene:s.name})):[]});if(config.mode==='entries')all=selectEntryLines(all,w,config.actor);if(!all.length){toast('No quedan intervenciones para esta selección');return}stopAll();session={workId:w.id,actor:config.actor,config,lines:all,index:Math.max(0,Math.min(index,all.length-1)),mode:config.mode,autovoice:config.autovoice,autorec:config.autorec,revealed:false,hint:0,started:Date.now(),heard:'',segmentIndex:0,paused:false,completedIds:new Set(completedIds)};syncSessionTab();updateRate(w.rate||1.15);storePractice();show('rehearsal');renderRehearsal(true)}
+function startPractice(config,index=0,completedIds=[]){config={...config,mode:['normal','memory','continuous','entries'].includes(config.mode)?config.mode:'normal'};let w=works.find(x=>x.id===config.workId);if(!w)return;choose(w);let all=config.sceneIds.flatMap(id=>{let s=getScene(w,id);return s?sceneEvents(s).map(l=>({...l,scene:s.name})):[]});if(config.mode==='entries')all=selectEntryLines(all,w,config.actor);if(!all.length){toast('No quedan intervenciones para esta selección');return}stopAll('new-practice');session={workId:w.id,actor:config.actor,config,lines:all,index:Math.max(0,Math.min(index,all.length-1)),mode:config.mode,autovoice:config.autovoice,autorec:config.autorec,revealed:false,hint:0,started:Date.now(),heard:'',segmentIndex:0,paused:false,completedIds:new Set(completedIds)};syncSessionTab();updateRate(w.rate||1.15);storePractice();show('rehearsal');renderRehearsal(true)}
 $('start').onclick=()=>{let w=getWork();if(!w){toast('Selecciona una obra');return}let ids=($('scope').value==='all'?w.scenes.map(s=>s.id):w.selected);if(!ids.length){toast('Selecciona al menos una escena');return}let all=preparedLines();if(!all.length){toast('No hay intervenciones');return}let idx=Number($('start-line').value||0);let config={workId:w.id,actor:w.actor,sceneIds:ids,mode:$('mode').value,autovoice:$('autovoice').checked,autorec:$('autorec').checked};w.practiceOptions={scope:$('scope').value,mode:config.mode,autovoice:config.autovoice,autorec:config.autorec};startPractice(config,idx)};
 function resumePractice(){let w=getWork(),data=w?.practiceState;if(!workReady(w)){show('edit');return}if(!data?.config){toast('Primero prepara un ensayo');return}startPractice(data.config,data.index||0,data.completedIds||[])}
 function currentLine(){return session?.lines[session.index]}
 function renderJumpChoices(){if(!session)return;let filter=normalize($('jump-filter').value),old=$('jump-line').value;$('jump-line').innerHTML=session.lines.map((l,i)=>({l,i})).filter(({l})=>normalize(l.speaker+' '+l.text+' '+l.scene).includes(filter)).map(({l,i})=>'<option value="'+i+'">'+(i+1)+' · '+escapeHTML(l.speaker)+' · '+escapeHTML(l.text.slice(0,70))+'</option>').join('');if([...$('jump-line').options].some(o=>o.value===old))$('jump-line').value=old;else if(!filter)$('jump-line').value=String(session.index)}
-$('jump-filter').oninput=renderJumpChoices;$('jump-go').onclick=()=>{let idx=Number($('jump-line').value);if(!Number.isInteger(idx)||idx<0||idx>=session?.lines.length)return;stopAll();session.index=idx;session.paused=false;resetTurn();storePractice();renderRehearsal(true)};
+$('jump-filter').oninput=renderJumpChoices;$('jump-go').onclick=()=>{let idx=Number($('jump-line').value);if(!Number.isInteger(idx)||idx<0||idx>=session?.lines.length)return;stopAll('jump');session.index=idx;session.paused=false;resetTurn();storePractice();renderRehearsal(true)};
 function resetTurn(){if(!session)return;session.revealed=false;session.hint=0;session.heard='';session.segmentIndex=0}
 function renderRehearsal(auto=false){
  if(!session)return;
@@ -177,7 +213,7 @@ function renderRehearsal(auto=false){
  $('rehearsal-counter').textContent=(session.index+1)+' / '+session.lines.length;
  $('rehearsal-scene').textContent=l.scene+(l.type==='song'?' · 🎵 Canción':direction?' · Acotación':'');
  $('rehearsal-mode').textContent=({normal:'Normal',memory:'Memorización',continuous:'Función completa',entries:'Solo mis entradas'})[session.mode]||'Ensayo';
- const showText=direction||!me||rules.showMine||session.revealed;
+ const showText=direction||!me||session.mode==='normal'||rules.showMine||session.revealed;
  const text=showText?l.text:modeHintText(l,session.hint);
  $('dialogue').className='voice-bubble '+(me?'you':'');
  $('dialogue').style.setProperty('--role-color',roleColor(l.speaker));
@@ -205,20 +241,29 @@ function renderRehearsal(auto=false){
  if(auto&&!session.paused){if(direction){ // no auto-reading, continue through direction after a short visual pause
   if(session.autovoice){let epoch=recognitionEpoch;directionTimer=setTimeout(()=>{if(session&&!session.paused&&epoch===recognitionEpoch&&tab==='rehearsal'&&currentLine()===l)move(1)},1000)}
 }else if(!me&&session.autovoice){speechLine(l,()=>{if(session&&!session.paused&&tab==='rehearsal'&&currentLine()===l)move(1)})}else if(me&&session.autorec){listenSpeech()}}}
-$('pause-ensayo').onclick=()=>{if(!session)return;if(!session.paused){session.paused=true;stopAll();$('feedback').textContent='Ensayo en pausa. No se escucha el micrófono ni avanza el guion.';refreshPauseButton();storePractice()}else{session.paused=false;stopAll();resetTurn();renderRehearsal(true);storePractice();toast('Turno reanudado desde el inicio')}};
-function move(delta,completed=false){if(!session||session.paused)return;if(delta>0&&completed&&isMine(currentLine(),getWork(),session.actor)){session.completedIds.add(currentLine().id)}stopAll();let next=session.index+delta;if(next>=session.lines.length){finishSession(true);return}session.index=Math.max(0,next);resetTurn();storePractice();renderRehearsal(true)}
-$('next').onclick=()=>move(1);$('prev').onclick=()=>move(-1);$('done-speaking').onclick=()=>move(1,true);$('restart').onclick=()=>{if(!session||session.paused)return;stopAll();resetTurn();renderRehearsal(true)};
-$('repeat-cue').onclick=()=>{if(!session||session.paused)return;let w=getWork();let cue=session.lines.slice(0,session.index).reverse().find(l=>!isDirection(l)&&!isMine(l,w,session.actor));if(!cue){toast('No hay réplica anterior de otro personaje');return}stopAll();speechLine(cue,()=>{if(session&&isMine(currentLine(),w,session.actor)&&session.autorec)listenSpeech()})};
-$('listen').onclick=()=>{if(!session||session.paused)return;let l=currentLine();if(isDirection(l)||isMine(l,getWork(),session.actor)){toast('Esta frase es tuya o es una acotación');return}stopAll();speechLine(l)};
+$('pause-ensayo').onclick=()=>{if(!session)return;if(!session.paused){session.paused=true;stopAll('pause');$('feedback').textContent='Ensayo en pausa. No se escucha el micrófono ni avanza el guion.';refreshPauseButton();storePractice()}else{session.paused=false;stopAll('resume');resetTurn();renderRehearsal(true);storePractice();toast('Turno reanudado desde el inicio')}};
+function move(delta,completed=false){if(!session||session.paused)return;if(delta>0&&completed&&isMine(currentLine(),getWork(),session.actor)){session.completedIds.add(currentLine().id)}stopAll('move:'+delta+(completed?':completed':''));let next=session.index+delta;if(next>=session.lines.length){finishSession(true);return}session.index=Math.max(0,next);resetTurn();storePractice();renderRehearsal(true)}
+$('next').onclick=()=>move(1);$('prev').onclick=()=>move(-1);$('done-speaking').onclick=()=>move(1,true);$('restart').onclick=()=>{if(!session||session.paused)return;stopAll('repeat-current-turn');resetTurn();renderRehearsal(true)};
+$('repeat-cue').onclick=()=>{if(!session||session.paused)return;let w=getWork();let cue=session.lines.slice(0,session.index).reverse().find(l=>!isDirection(l)&&!isMine(l,w,session.actor));if(!cue){toast('No hay réplica anterior de otro personaje');return}stopAll('repeat-cue');speechLine(cue,()=>{if(session&&isMine(currentLine(),w,session.actor)&&session.autorec)listenSpeech()})};
+$('listen').onclick=()=>{if(!session||session.paused)return;let l=currentLine();if(isDirection(l)||isMine(l,getWork(),session.actor)){toast('Esta frase es tuya o es una acotación');return}stopAll('listen-other');speechLine(l)};
 $('hint').onclick=()=>{if(!session)return;if(!isMine(currentLine(),getWork(),session.actor)){toast('Las pistas son para tus intervenciones');return}session.hint=Math.min(2,session.hint+1);renderRehearsal(false)};
 $('reveal').onclick=()=>{if(!session)return;session.revealed=!session.revealed;renderRehearsal(false)};
 // A new recognizer owns exactly one temporary snapshot. Only finalized words are
 // committed on end, once. Old callbacks and multiple starts are explicitly ignored.
-function listenSpeech(){
+function listenSpeech(source='automatic'){
  if(!session||session.paused||!isMine(currentLine(),getWork(),session.actor))return;
  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
  if(!SR){toast('Reconocimiento no disponible. Usa Chrome Android o «He terminado».');return}
- stopAll();
+ // Re-rendering a turn or tapping Hablar must not reset a live recognition.
+ if(currentVoiceTurn?.valid() && currentVoiceTurn.index===session.index){
+  traceVoice('TURN_REQUEST_IGNORED',{source,index:session.index,active:!!recognizer,retryPending:!!recRestartTimer});
+  if(source==='manual' && !recognizer){
+   clearTimeout(recRestartTimer);recRestartTimer=null;
+   currentVoiceTurn.startRecognizer();
+  }
+  return;
+ }
+ stopAll('start-listening:'+source);
  const epoch=recognitionEpoch,index=session.index,w=getWork(),line=currentLine(),parts=langParts(line,w);
  let segment=0,completedSegments=[],committed='',silentRestarts=0,consecutiveStarts=0,activeRecognizer=null,turnFinished=false;
  const valid=()=>!turnFinished&&epoch===recognitionEpoch&&session&&!session.paused&&session.index===index&&tab==='rehearsal';
@@ -259,15 +304,16 @@ function listenSpeech(){
   r.onaudioend=()=>{if(owned())traceVoice('AUDIO_END',{sid})};
   r.onresult=e=>{
    if(!owned())return;
-   // Rebuild the *current* recognition snapshot; resultIndex is not an append offset.
-   const rows=Array.from(e.results||[]);
-   lastFinal=combine(...rows.filter(x=>x.isFinal).map(x=>x[0]?.transcript||''));
-   lastInterim=combine(...rows.filter(x=>!x.isFinal).map(x=>x[0]?.transcript||''));
+   // Android Chrome often returns growing *cumulative* hypotheses as final rows.
+   // Assemble each snapshot once; never concatenate its expanding alternatives.
+   const snapshot=snapshotRecognition(e.results);
+   lastFinal=snapshot.final;
+   lastInterim=snapshot.interim;
    const live=combine(lastFinal,lastInterim);
    if(!live)return;
    hadResult=true;silentRestarts=0;
    showLive(live);
-   traceVoice('RESULT',{...summary(),resultCount:rows.length,resultIndex:e.resultIndex,heardWords:session.heard.trim().split(/\s+/).filter(Boolean).length});
+   traceVoice('RESULT',{...summary(),resultCount:snapshot.rows,resultIndex:e.resultIndex,groups:snapshot.groups,expansions:snapshot.expansions,duplicates:snapshot.duplicates,heardWords:session.heard.trim().split(/\s+/).filter(Boolean).length});
    const expected=parts[segment]?.text||'';
    const pct=score(expected,mergeRecognized(committed,live));
    $('feedback').textContent=modeRules(session.mode).showFeedback?'Escuchando ('+lang+') · coincidencia aproximada '+pct+'%. Puedes pulsar «He terminado».':'Escuchando tu intervención…';
@@ -296,7 +342,7 @@ function listenSpeech(){
   r.onend=()=>{
    if(closed)return;
    closed=true;
-   if(!valid()||activeRecognizer!==r||recognizer!==r){traceVoice('STALE_END',{sid});return}
+   if(!valid()||activeRecognizer!==r||recognizer!==r){traceVoice('STALE_END',{sid,epoch,nowEpoch:recognitionEpoch});return}
    traceVoice('END',{...summary(),hadResult,started,nextSegment,fatal});
    clearTimeout(recTimer);recTimer=null;
    activeRecognizer=null;recognizer=null;
@@ -327,11 +373,12 @@ function listenSpeech(){
    $('feedback').textContent='No se pudo activar el micrófono: '+error.message;
   }
  }
- traceVoice('TURN_START',{epoch,index,language:parts[0]?.language||getLang(w),segments:parts.length,retrySeconds:w.pauseSeconds});
+ currentVoiceTurn={epoch,index,valid,startRecognizer};
+ traceVoice('TURN_START',{source,epoch,index,mode:session.mode,showMine:modeRules(session.mode).showMine,language:parts[0]?.language||getLang(w),segments:parts.length,retrySeconds:w.pauseSeconds});
  startRecognizer();
 }
-$('talk').onclick=listenSpeech;
-async function finishSession(completed=false){if(!session)return;stopAll();let w=works.find(w=>w.id===session.workId);if(w){w.lastPractice=Date.now();w.lastActor=session.actor;if(completed)w.practiceState=null;else storePractice();await persist(w)}session=null;syncSessionTab();show('home');toast(completed?'Ensayo completado':'Ensayo guardado para continuar')}
+$('talk').onclick=()=>listenSpeech('manual');
+async function finishSession(completed=false){if(!session)return;stopAll('finish-session');let w=works.find(w=>w.id===session.workId);if(w){w.lastPractice=Date.now();w.lastActor=session.actor;if(completed)w.practiceState=null;else storePractice();await persist(w)}session=null;syncSessionTab();show('home');toast(completed?'Ensayo completado':'Ensayo guardado para continuar')}
 $('finish').onclick=()=>finishSession(false);
 async function init(){applyTheme();try{db=await openDB();works=await tx('readonly',s=>s.getAll())||[];works.forEach(migrate);works.sort((a,b)=>b.updated-a.updated);activeId=localStorage.getItem('mi-apuntador-active');if(!works.some(w=>w.id===activeId))activeId=works[0]?.id||null;if(activeId)editSceneId=getWork()?.scenes[0]?.id;renderWorks();renderHome();syncSessionTab();show('home');if(location.protocol==='https:'&&'serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});}catch(e){$('save-status').textContent='Sin almacenamiento';toast('No se pudo abrir la base de datos local: '+e.message)}}
 init();
