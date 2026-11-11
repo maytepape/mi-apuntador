@@ -1,4 +1,4 @@
-# Mi Apuntador v2.2 — actualización de interfaz
+# Mi Apuntador v2.4 — estabilidad de reconocimiento
 
 PWA para ensayar obras de teatro en Android. Esta versión modifica la navegación y añade temas de apariencia, sin cambiar el nombre ni la versión de la base de datos (`mi-apuntador-db`, almacén `works`). **No elimines los datos del sitio** para actualizar.
 
@@ -22,11 +22,11 @@ PWA para ensayar obras de teatro en Android. Esta versión modifica la navegaci�
    git pull --ff-only origin v2.1
    # Copia ahora los seis archivos actualizados a la carpeta del repositorio
    git add index.html app.js sw.js manifest.webmanifest icon.svg README.md
-   git commit -m "Mi Apuntador v2.2: temas e inicio de ensayo"
+   git commit -m "Mi Apuntador v2.4: reconocimiento estable"
    git push origin v2.1
    ```
 4. GitHub Pages solo sirve directamente **una rama por repositorio** bajo el endpoint configurado. Subir esta versión a `v2.1` no altera `main`, pero solo se publicará en la web si Pages usa esa rama o si existe un workflow específico para desplegarla en otra ruta.
-5. Abre la URL con Chrome Android. El service worker usa caché `mi-apuntador-v2.2`. Si ves la pantalla anterior, recarga tras completarse la publicación.
+5. Abre la URL con Chrome Android. El service worker usa caché `mi-apuntador-v2.4`. Si ves la pantalla anterior, recarga tras completarse la publicación.
 
 **Privacidad**: no subas los guiones ni los JSON de una obra a un repositorio público; impórtalos localmente desde la PWA.
 
@@ -51,3 +51,14 @@ El reconocimiento de voz se basa en la API del navegador, que puede necesitar re
 - **Preparar ensayo → Voces por personaje:** permite elegir distintas voces disponibles en Android para el idioma principal; si no hay suficientes se reutiliza la general. Las voces se guardan por obra.
 - Misma IndexedDB y esquema previo: no borra las obras ni las preferencias.
 - Importante: Chrome Android puede ofrecer una única voz catalana; la asignación de voces depende de las voces reales del dispositivo.
+
+
+## v2.4: estabilidad de reconocimiento
+
+- Los resultados de SpeechRecognition se tratan como instantáneas acumulativas por sesión, sin duplicación de hipótesis intermedias o finales.
+- Se mantiene separada la transcripción confirmada al iniciar una nueva sesión.
+- Se eliminan los cortes periódicos cortos del micrófono; solo hay un límite de seguridad de 30 s sin eventos.
+- Los reinicios llevan una espera y se detienen tras dos sesiones consecutivas sin voz; «Hablar» permite continuar.
+- Al pausar, terminar, cambiar de turno o salir se invalidan todos los eventos anteriores.
+
+**Importante:** Chrome puede cerrar sesiones por sí mismo; no es posible garantizar escucha perpetua. Se requiere prueba con micrófono real en Chrome Android.

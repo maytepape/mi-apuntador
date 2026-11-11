@@ -129,12 +129,105 @@ $('repeat-cue').onclick=()=>{if(!session||session.paused)return;let w=getWork();
 $('listen').onclick=()=>{if(!session||session.paused)return;let l=currentLine();if(isDirection(l)||isMine(l,getWork(),session.actor)){toast('Esta frase es tuya o es una acotación');return}stopAll();speechLine(l)};
 $('hint').onclick=()=>{if(!session)return;if(!isMine(currentLine(),getWork(),session.actor)){toast('Las pistas son para tus intervenciones');return}session.hint=Math.min(2,session.hint+1);renderRehearsal(false)};
 $('reveal').onclick=()=>{if(!session)return;session.revealed=!session.revealed;renderRehearsal(false)};
-function listenSpeech(){if(!session||session.paused||!isMine(currentLine(),getWork(),session.actor))return;let SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){toast('Reconocimiento no disponible. Usa Chrome Android o «He terminado».');return}stopAll();let epoch=recognitionEpoch,index=session.index,w=getWork(),line=currentLine(),parts=langParts(line,w);let segment=0,accum='',tries=0,wholeHeard='';let lastFinal='';function startRecognizer(){if(epoch!==recognitionEpoch||!session||session.index!==index)return;const r=new SR();recognizer=r;r.lang=parts[segment]?.language||getLang(w);r.interimResults=true;r.continuous=true;r.maxAlternatives=1;let hadError=false;let ended=false;clearTimeout(recTimer);recTimer=setTimeout(()=>{if(epoch===recognitionEpoch&&recognizer===r){try{r.stop()}catch{}}},Math.max(2,w.pauseSeconds||5)*1000+5000);
- r.onresult=e=>{if(epoch!==recognitionEpoch||session?.index!==index)return;let results=[...e.results],final=results.filter(x=>x.isFinal).map(x=>x[0].transcript).join(' '),interim=results.filter(x=>!x.isFinal).map(x=>x[0].transcript).join(' ');if(final&&final!==lastFinal){accum=final.startsWith(lastFinal)?(accum+' '+final.slice(lastFinal.length)).trim():(accum+' '+final).trim();lastFinal=final;tries=0}let heard=(accum+' '+interim).trim();session.heard=(wholeHeard+' '+heard).trim();$('transcript-area').classList.remove('hidden');$('transcript').textContent=session.heard;let expected=parts[segment]?.text||'',pct=score(expected,heard);$('feedback').textContent='Escuchando ('+r.lang+') · coincidencia aproximada '+pct+'%. Puedes pulsar «He terminado».';clearTimeout(recTimer);recTimer=setTimeout(()=>{if(epoch===recognitionEpoch&&recognizer===r){try{r.stop()}catch{}}},Math.max(2,w.pauseSeconds||5)*1000);if(pct>=87&&expected.trim().length>3){if(segment<parts.length-1){wholeHeard=(wholeHeard+' '+heard).trim();segment++;accum='';lastFinal='';session.heard=wholeHeard;clearTimeout(recTimer);try{r.stop()}catch{};return}else{clearTimeout(recTimer);move(1)}}};
- r.onerror=e=>{if(epoch!==recognitionEpoch)return;if(e.error==='aborted')return;hadError=true;if(['not-allowed','service-not-allowed','network','audio-capture'].includes(e.error)){$('feedback').textContent='Reconocimiento no disponible ('+e.error+'). Usa «He terminado». No se reintentará automáticamente.';tries=99}else{$('feedback').textContent='Reconocimiento interrumpido ('+e.error+').'}};
- r.onend=()=>{if(epoch!==recognitionEpoch)return;clearTimeout(recTimer);if(recognizer===r)recognizer=null;if(tries>=4||w.autoRetry===false){if(tries<99)$('feedback').textContent='Escucha detenida. Puedes pulsar «Hablar» o «He terminado».';return}tries++;recRestartTimer=setTimeout(startRecognizer,380)};
- try{r.start();$('feedback').textContent='Escuchando en '+(LANGUAGES[r.lang]||r.lang)+'…'}catch(err){$('feedback').textContent='No se pudo activar el micrófono: '+err.message}}
- startRecognizer()}
+// SpeechRecognition returns a *snapshot* of all results in a recognition session.
+// Interim and final hypotheses must never be blindly appended on every onresult.
+function listenSpeech(){
+ if(!session||session.paused||!isMine(currentLine(),getWork(),session.actor))return;
+ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!SR){toast('Reconocimiento no disponible. Usa Chrome Android o «He terminado».');return}
+ stopAll();
+ const epoch=recognitionEpoch,index=session.index,w=getWork(),line=currentLine(),parts=langParts(line,w);
+ let segment=0,completedSegments=[],segmentCommitted='',silentRestarts=0,restartRequested=false;
+ let previousSessionEnd=0,active=false;
+ const valid=()=>epoch===recognitionEpoch&&session&&!session.paused&&session.index===index&&tab==='rehearsal';
+ const combine=(...items)=>items.map(v=>(v||'').trim()).filter(Boolean).join(' ').trim();
+ const display=live=>{
+   if(!valid())return;
+   session.heard=combine(...completedSegments,segmentCommitted,live);
+   $('transcript-area').classList.toggle('hidden',!session.heard);
+   $('transcript').textContent=session.heard;
+ };
+ function scheduleRestart(delay){
+   if(!valid()||!w.autoRetry||silentRestarts>=2){
+     if(valid())$('feedback').textContent='Escucha detenida. Pulsa «Hablar» para continuar o «He terminado».';
+     return;
+   }
+   clearTimeout(recRestartTimer);
+   recRestartTimer=setTimeout(()=>{recRestartTimer=null;if(valid())startRecognizer()},delay);
+ }
+ function startRecognizer(){
+   if(!valid()||active)return;
+   const r=new SR();recognizer=r;active=true;
+   r.lang=parts[segment]?.language||getLang(w);
+   r.interimResults=true;r.continuous=true;r.maxAlternatives=1;
+   let snapshotFinal='',snapshotInterim='',fatal=false,hadSpeech=false,changingSegment=false;
+   const stopForInactivity=()=>{
+     clearTimeout(recTimer);
+     // Chrome ends naturally on silence. This is only a fallback for a stuck session;
+     // do not stop and restart the microphone every 5 seconds while the actor thinks.
+     recTimer=setTimeout(()=>{if(valid()&&recognizer===r){try{r.stop()}catch{}}},30000);
+   };
+   r.onresult=e=>{
+     if(!valid()||recognizer!==r)return;
+     // Full results[] is a cumulative snapshot for this *one* recognition instance.
+     const all=Array.from(e.results);
+     snapshotFinal=combine(...all.filter(x=>x.isFinal).map(x=>x[0]?.transcript||''));
+     snapshotInterim=combine(...all.filter(x=>!x.isFinal).map(x=>x[0]?.transcript||''));
+     let thisSession=combine(snapshotFinal,snapshotInterim);
+     if(!thisSession)return;
+     hadSpeech=true;silentRestarts=0;
+     display(thisSession);
+     const expected=parts[segment]?.text||'';
+     const pct=score(expected,combine(segmentCommitted,thisSession));
+     $('feedback').textContent='Escuchando ('+r.lang+') · coincidencia aproximada '+pct+'%. Puedes pulsar «He terminado».';
+     stopForInactivity();
+     if(pct>=87&&expected.trim().length>3){
+       if(segment<parts.length-1){
+         // Change the recognition language only *after* the previous instance ends.
+         segmentCommitted=combine(segmentCommitted,thisSession);
+         completedSegments.push(segmentCommitted);
+         segmentCommitted='';segment++;changingSegment=true;
+         display('');
+         clearTimeout(recTimer);
+         try{r.stop()}catch{}
+       }else{
+         clearTimeout(recTimer);move(1);
+       }
+     }
+   };
+   r.onerror=e=>{
+     if(!valid()||recognizer!==r||e.error==='aborted')return;
+     if(['not-allowed','service-not-allowed','network','audio-capture'].includes(e.error)){
+       fatal=true;
+       $('feedback').textContent='Reconocimiento no disponible ('+e.error+'). Usa «He terminado». No se reintentará automáticamente.';
+     }else if(e.error!=='no-speech'){
+       $('feedback').textContent='Reconocimiento interrumpido ('+e.error+').';
+     }
+   };
+   r.onend=()=>{
+     if(!valid()||recognizer!==r)return;
+     clearTimeout(recTimer);recognizer=null;active=false;
+     // Save only the final snapshot ONCE. A new instance has its own result indexes.
+     if(!changingSegment){
+       segmentCommitted=combine(segmentCommitted,snapshotFinal);
+       // Interim results are not finalized; preserve them visually only until
+       // the next recognizer starts, rather than pretending they are confirmed.
+       display('');
+     }
+     if(fatal)return;
+     if(changingSegment){silentRestarts=0;scheduleRestart(450);return}
+     if(!hadSpeech)silentRestarts++;
+     // Back off on silence: avoids continuous microphone blinking and loops.
+     const delay=!hadSpeech?Math.min(3500,1200*silentRestarts):900;
+     $('feedback').textContent=hadSpeech?'Esperando que continúes…':'Sin voz detectada. Esperando…';
+     previousSessionEnd=Date.now();
+     scheduleRestart(delay);
+   };
+   try{r.start();stopForInactivity();$('feedback').textContent='Escuchando en '+(LANGUAGES[r.lang]||r.lang)+'…'}
+   catch(err){active=false;recognizer=null;clearTimeout(recTimer);$('feedback').textContent='No se pudo activar el micrófono: '+err.message}
+ }
+ startRecognizer();
+}
 $('talk').onclick=listenSpeech;
 async function finishSession(completed=false){if(!session)return;stopAll();let w=works.find(w=>w.id===session.workId);if(w){w.lastPractice=Date.now();w.lastActor=session.actor;if(completed)w.practiceState=null;else storePractice();await persist(w)}session=null;syncSessionTab();show('home');toast(completed?'Ensayo completado':'Ensayo guardado para continuar')}
 $('finish').onclick=()=>finishSession(false);
