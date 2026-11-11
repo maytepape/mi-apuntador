@@ -1,52 +1,43 @@
-# Mi Apuntador v2.1 — PWA instalable en Android
+# Mi Apuntador v2.2 — actualización de interfaz
 
-Actualización de la versión 2.0. Conserva la base de datos `mi-apuntador-db` y la tabla `works`: **no borres los datos del sitio** durante la actualización.
+PWA para ensayar obras de teatro en Android. Esta versión modifica la navegación y añade temas de apariencia, sin cambiar el nombre ni la versión de la base de datos (`mi-apuntador-db`, almacén `works`). **No elimines los datos del sitio** para actualizar.
 
-## Actualizar tu GitHub Pages
+## Novedades
 
-1. En el móvil, antes de actualizar: **Obras → Exportar copia de seguridad**. Guarda ese JSON fuera de la aplicación.
-2. En Terminal, dentro del repositorio local, comprueba que trabajas en `main` y sincroniza **antes de copiar los archivos nuevos**:
+- **Claro / Oscuro / Automático** en Ajustes → Apariencia. El modo automático sigue la preferencia del sistema operativo. Se guarda localmente en el navegador.
+- **Inicio centrado en el ensayo**: muestra obra activa, personaje, idioma, continuar ensayo si hay uno guardado, preparar ensayo y accesos a escenas. No hay gestión ni edición en la portada cuando la obra está validada.
+- **Primer uso guiado**: si no hay obras, la portada ofrece «Añadir mi primera obra». Si la obra activa necesita revisión, ofrece «Revisar y validar diálogos».
+- **Validación explícita**: una nueva obra importada queda pendiente hasta pulsar «He revisado esta obra · Lista para ensayar» desde el editor. La pestaña Preparar aparece solo cuando la obra activa está validada.
+- **Gestión de obras desde Ajustes → Gestionar obras**: importar, cambiar obra, editar, restaurar/exportar copias y eliminar.
+- **Compatibilidad con v2.1**: las obras antiguas que ya contienen intervenciones se consideran revisadas para no interrumpir su uso; no cambia el formato `scenes`, ni el sistema de participantes, idiomas, acotaciones o `practiceState`.
+- Se conservan las funciones de escucha, botón «He terminado», repetición de turno, idiomas por fragmentos, cambio de velocidad, salto a intervención y memoria de progreso.
 
+## Publicación en GitHub Pages
+
+1. Desde la app v2.1, exporta una copia de seguridad en **Obras → Exportar copia de seguridad**.
+2. Descomprime este ZIP. Copia a la **raíz de la rama que publicas** los seis archivos de `mi-apuntador/`: `index.html`, `app.js`, `sw.js`, `manifest.webmanifest`, `icon.svg` y `README.md`.
+3. Desde tu repositorio local, si quieres seguir desarrollando sobre la rama `v2.1` sin tocar `main`:
    ```bash
-   git branch --show-current
-   git pull --ff-only origin main
-   ```
-
-3. Descomprime `Mi_Apuntador_Android_v2.1.zip`. Sustituye los archivos del repositorio por los que hay **dentro de la carpeta `mi-apuntador/`** del ZIP. Mantén intacta la carpeta oculta `.git`. Después ejecuta:
-
-   ```bash
+   git switch v2.1
+   git pull --ff-only origin v2.1
+   # Copia ahora los seis archivos actualizados a la carpeta del repositorio
    git add index.html app.js sw.js manifest.webmanifest icon.svg README.md
-   git commit -m "Mi Apuntador v2.1: ensayo inteligente"
-   git push origin main
+   git commit -m "Mi Apuntador v2.2: temas e inicio de ensayo"
+   git push origin v2.1
    ```
+4. GitHub Pages solo sirve directamente **una rama por repositorio** bajo el endpoint configurado. Subir esta versión a `v2.1` no altera `main`, pero solo se publicará en la web si Pages usa esa rama o si existe un workflow específico para desplegarla en otra ruta.
+5. Abre la URL con Chrome Android. El service worker usa caché `mi-apuntador-v2.2`. Si ves la pantalla anterior, recarga tras completarse la publicación.
 
-   Si `git pull` avisa de que sobrescribiría cambios locales, no lo fuerces: resuelve primero esa situación. Comprueba que el resultado de `git branch --show-current` es `main` antes de subir.
-4. Abre el mismo enlace de GitHub Pages desde Chrome Android. El service worker utiliza una caché nueva (`mi-apuntador-v2.1`). Si sigues viendo la v2.0, cierra la aplicación y recarga la dirección en Chrome; puede que debas cerrar y abrir la PWA de nuevo.
-5. Comprueba que tu obra sigue en «Obras» y que «Inicio» permite preparar o continuar un ensayo. Si falta una obra, importa la copia JSON.
+**Privacidad**: no subas los guiones ni los JSON de una obra a un repositorio público; impórtalos localmente desde la PWA.
 
-**Importante:** no subas el JSON ni el PDF de la obra a un repositorio público de GitHub. Impórtalos en el móvil desde la app.
+## Comprobaciones recomendadas
 
-## Cambios
-
-- Inicio prioritario, «Preparar», «Obras» y «Ajustes»; la pestaña «Ensayar» solo se muestra con una sesión preparada.
-- «Preparar» permite elegir una escena y **un punto de inicio** filtrando por personaje o palabras del texto.
-- En ensayo se puede **saltar directamente** a una intervención, repetir solo el turno actual, repetir la última réplica ajena y pulsar **«He terminado»** en cualquier intervención propia.
-- Se admite reconocimiento automático de las intervenciones; se intenta mantener la escucha mediante reactivación limitada en pausas. El botón «He terminado» siempre está disponible. Ante errores como `network`, no se fuerza un bucle de reintentos.
-- Idioma principal por obra y campo `languageSegments` por intervención. Se lee por fragmentos y se intenta reconocer secuencialmente con el idioma indicado para cada parte. Chrome no puede reconocer varios idiomas a la vez de forma garantizada.
-- Edición de `languageSegments` por intervención. Cada elemento debe tener `text` y `language`. **La concatenación exacta de los fragmentos debe coincidir con el texto de la intervención**, para evitar perder palabras. Idiomas: `ca-ES`, `es-ES`, `de-DE`, `fr-FR`, `en-US`, `it-IT`.
-- Velocidad de síntesis ajustable de 0,60× a 2,00×; predeterminado 1,15×. Se puede modificar durante el ensayo y se guarda por obra.
-- Recuperación de la posición de un ensayo interrumpido, junto con su personaje, selección de escenas y modo.
-- Se conservan los parlamentos colectivos (`TOTES`) y las intervenciones compartidas que incluyen a Louise como turnos propios que no se leen en voz alta.
-- JSON de obra y sus metadatos, acotaciones y canciones: compatible con el archivo del primer acto preparado previamente.
+- Primera instalación sin obras → pantalla de bienvenida → importar JSON → revisar → validar → Inicio con escenas.
+- Actualización con obras de v2.1 → portada de ensayo sin reimportar obras y con progreso anterior.
+- Ajustes → modo Claro, Oscuro y Automático → cerrar/reabrir → se mantiene preferencia.
+- Ajustes → Gestionar obras → editar → volver → seleccionar otra obra → Inicio actualizado.
+- Preparar y reanudar ensayo → Louise y `TOTES` continúan marcados como turnos propios.
 
 ## Limitaciones
 
-- La síntesis de voz **lee**, no canta. El orden y la asignación de versos de canciones con varias columnas deben revisarse manualmente.
-- La detección de final de frase es **aproximada** y puede adelantar o retrasar el paso; usa «He terminado» para control manual. Durante el cambio de idioma pueden producirse pausas y reconocimientos inexactos.
-- Chrome Android es el navegador aconsejado. Otros navegadores pueden dar errores de reconocimiento (`network`). Las funciones de voz pueden necesitar conexión y voces instaladas. No es un reconocimiento offline garantizado.
-- No hay sincronización de guiones entre dispositivos. IndexedDB conserva las obras solo mientras mantengas los datos de ese sitio y navegador; conserva copias JSON periódicas.
-- Los PDF con tablas/columnas pueden extraerse mal. Para esta obra, importa el JSON del acto I en lugar de analizar el PDF directamente.
-
-## Archivos del proyecto
-
-`index.html`, `app.js`, `sw.js`, `manifest.webmanifest`, `icon.svg` y `README.md`. Para GitHub Pages, colócalos en la raíz publicada del repositorio.
+El reconocimiento de voz se basa en la API del navegador, que puede necesitar red, y se ha probado principalmente para Chrome Android en sesiones anteriores. La síntesis de voz no canta. Los fragmentos de diferentes idiomas necesitan revisión manual. Las obras se conservan **por origen y navegador** en IndexedDB; la misma aplicación en otra ruta web o navegador puede tener una base de datos distinta. Realiza copias de seguridad regulares.
